@@ -9,6 +9,7 @@
 
 #include <kwk/concepts/container.hpp>
 #include <kwk/algorithm/algos/for_each.hpp>
+#include <kwk/detail/assert.hpp>
 #include <kwk/detail/abi.hpp>
 #include <cstddef>
 #include <utility>
@@ -55,7 +56,13 @@ namespace kwk
   template<typename Func_1, typename Func_2, concepts::container In>
   constexpr auto inner_product(In const& in1, In const& in2, auto init, Func_1 f1, Func_2 f2)
   {
-    if(in1.shape() != in2.shape()) return -1;
+    /* if(in1.shape() != in2.shape()) return -1; */
+    KIWAKU_ASSERT ( in1.shape() == in2.shape()
+                    ,   "[KWK] - Inner product dimensions do not match, container one dimensions are "
+                    << in1.shape() << ",  container two dimensions are "
+                    << in2.shape() << "."
+                    );
+
     //pareil que for each element in in1, in2 ?
     kwk::for_each([&](auto... is) { init = f1(init, f2(in1(is...), in2(is...))); }, in1.shape() );
     return init;
