@@ -16,3 +16,4 @@ copa_glob_unit(QUIET PATTERN "doc/*.cpp" INTERFACE kiwaku_docs OPT_RELATIVE ${re
 ## Unit tests
 ##======================================================================================================================
 copa_glob_unit(PATTERN "unit/*.cpp"   INTERFACE kiwaku_test OPT_RELATIVE ${rel})
+
