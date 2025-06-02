@@ -62,4 +62,3 @@ if(KIWAKU_BUILD_TEST)
   add_custom_target(kiwaku-unit)
   add_subdirectory(test)
 endif()
-
