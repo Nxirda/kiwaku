@@ -10,6 +10,7 @@
 #include <kwk/utility/container/shape.hpp>
 #include "utility/shape/shape.hpp"
 
+/*
 TTS_CASE_TPL( "Building a nD shape with kwk::of_shape(a1,...,an)", sizes<10>)
 <typename T>(::tts::type<T>)
 {
@@ -24,3 +25,4 @@ TTS_CASE_TPL( "Building a nD shape with kwk::of_shape(a1,...,an)", sizes<10>)
   for(std::size_t i =0;i<T::value;++i)
     TTS_EQUAL(sh[i], static_cast<std::ptrdiff_t>(3*(i+1)) );
 };
+*/

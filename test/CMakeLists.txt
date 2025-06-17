@@ -6,6 +6,8 @@
 include(make_unit)
 set(unit_root "${CMAKE_SOURCE_DIR}/test")
 
+glob_unit(${unit_root} "algorithm/algos/context/eve/*.cpp")
+
 glob_unit(${unit_root} "algorithm/algos/*.cpp")
 
 glob_unit(${unit_root} "algorithm/algos/reduce/*.cpp")
