@@ -10,40 +10,14 @@
 #include <kwk/utility/coordinates.hpp>
 
 #include <eve/eve.hpp>
+
+/// Depending on the eve version
 //#include <eve/module/algo.hpp> 
 #include <eve/algo.hpp>
 
-namespace kwk::eve
-{
-    struct context : kwk::base_context<context>
-    {
-        template<typename Func, auto... S>
-        constexpr auto map(Func f, shape<S...> const& shp) const
-        {
-          return kwk::__::for_each(f, shp );
-        }
-
-        template<typename Func, concepts::container C0, concepts::container... Cs>
-        constexpr auto map(Func f, C0&& c0, Cs&&... cs) const
-        {
-          this->map([&](auto... is) { return f(KWK_FWD(c0)(is...), KWK_FWD(cs)(is...)...); }, c0.shape() );
-          return f;
-        }
-
-        template<typename Func, concepts::container Container>
-        constexpr auto map_index(Func f, Container&& c) const
-        {
-          this->map([&](auto... is) { return f(KWK_FWD(c)(is...), is...); }, c.shape());
-          return f;
-        }
-    };
-}
-
 namespace kwk
 {
-    inline constexpr kwk::eve::context simd = {};
-
-    //Simple function that builds a range on a kwk container
+   //Simple function that builds a range on a kwk container
     template<typename Ptr>
     auto make_range(Ptr p, auto n)
     {
@@ -58,7 +32,115 @@ namespace kwk
         auto inn    = kumi::get<0>(kumi::get<1>(s));
         return kumi::tuple{ext, inn};
     }
+    
+    namespace eve
+    {
+        struct context : kwk::base_context<context>
+        {
+            template<typename Func, auto... S>
+            constexpr auto map(Func f, shape<S...> const& shp) const
+            {
+              return kwk::__::for_each(f, shp );
+            }
 
+            template<typename Func, concepts::container C0, concepts::container... Cs>
+            constexpr auto map(Func f, C0&& c0, Cs&&... cs) const
+            {
+                if constexpr (std::remove_cvref_t<C0>::preserve_reachability && (std::remove_cvref_t<Cs>::preserve_reachability && ...))
+                { 
+                    auto sz = c0.numel();
+                    auto zipped = ::eve::views::zip(make_range(c0.get_data(), sz), make_range(cs.get_data(), sz)...);
+                    /// Maybe there is a better solution but hey, it works and shall be fine 
+                    ::eve::algo::for_each( zipped, 
+                    [&f](::eve::algo::iterator auto it, auto)
+                    {
+                        auto elements = ::eve::load(it);
+                        kumi::apply(f, elements);
+                        ::eve::store(elements, it);
+                    } );
+                }
+                else if constexpr (std::remove_cvref_t<C0>::stride::is_unit && (std::remove_cvref_t<Cs>::stride::is_unit && ...)) 
+                {
+                    auto [ext, inn] = extract_contiguous_dimensions(c0);
+                    kwk::__::for_each([&](auto... is)
+                    {
+                        auto zipped = ::eve::views::zip(make_range(&c0(is...,0), inn), make_range(&cs(is...,0), inn)...);
+                        /// Maybe there is a better solution but hey, it works and shall be fine 
+                        ::eve::algo::for_each( zipped, 
+                        [&f](::eve::algo::iterator auto it, auto)
+                        {
+                            auto elements = ::eve::load(it);
+                            kumi::apply(f, elements);
+                            ::eve::store(elements, it);
+                        } );
+
+                    }, ext);
+                }
+                else
+                {
+                    this->map([&](auto... is) { return f(KWK_FWD(c0)(is...), KWK_FWD(cs)(is...)...); }, c0.shape() );
+                }
+                return f;
+            }
+
+            /// Right now i dont really know the good way of doing that except to generate a container
+            /// of flat indexes
+            template<typename Func, concepts::container Container>
+            constexpr auto map_index(Func f, Container&& c) const
+            {       
+                if constexpr (std::remove_cvref_t<Container>::preserve_reachability)
+                { 
+                    auto sz = c.numel();
+                    auto zipped_elt     = ::eve::views::zip(make_range(c.get_data(), sz)); //, make_range(cs.get_data(), sz)...);
+                    auto zipped_whole   = ::eve::views::zip(zipped_elt, ::eve::views::iota(0));
+                    /// Maybe there is a better solution but hey, it works and shall be fine 
+                    ::eve::algo::for_each( zipped_whole, 
+                    [&f](::eve::algo::iterator auto it, auto)
+                    {
+                        auto elements = ::eve::load(it);
+                        kumi::apply(f, elements);
+                        ::eve::store(elements, it);
+                    } );
+                }
+                else if constexpr (std::remove_cvref_t<Container>::stride::is_unit) 
+                {
+                    auto [ext, inn] = extract_contiguous_dimensions(c);
+                    auto rmd = 0;
+
+                    kwk::__::for_each([&](auto... is)
+                    {
+                        auto zipped_elt     = ::eve::views::zip(make_range(&c(is...,0), inn)); //, make_range(&cs(is...,0), inn)...);
+                        auto zipped_whole   = ::eve::views::zip(zipped_elt, ::eve::views::iota(rmd)); 
+                        /// Maybe there is a better solution but hey, it works and shall be fine 
+                        ::eve::algo::for_each( zipped_whole, 
+                        [&f](::eve::algo::iterator auto it, auto)
+                        {
+                            //auto elements = ::eve::load(it);
+                            auto [elements_it, index_it] = it;
+                            
+                            auto elements = ::eve::load(elements_it);
+                            auto idxs     = ::eve::load(index_it);
+
+                            kumi::apply(f, elements);
+                            ::eve::store(elements, it);
+                        } );
+
+                    }, ext);
+                }
+                else
+                {
+                    this->map([&](auto... is) { return f(KWK_FWD(c)(is...)); }, c.shape() );
+                }
+              return f;
+            }
+        };
+    }
+
+    inline constexpr kwk::eve::context simd = {}; 
+}
+
+namespace kwk
+{
     /********************* Transform  *********************************/
     // Context signature isnt correct ofc (simplified)
     template<typename Func, concepts::container Out, concepts::container C0, concepts::container... Cs>
