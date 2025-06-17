@@ -10,7 +10,6 @@
 #include <kwk/container.hpp>
 #include "test.hpp"
 
-
 TTS_CASE("Check for kwk::fill(out, value) 1D")
 {
   int data[2];
