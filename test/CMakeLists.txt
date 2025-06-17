@@ -9,6 +9,7 @@ set(unit_root "${CMAKE_SOURCE_DIR}/test")
 # SYCL
 
 glob_unit(${unit_root} "algorithm/algos/context/sycl/*.cpp")
+glob_unit(${unit_root} "algorithm/algos/context/eve/*.cpp")
 
 glob_unit(${unit_root} "algorithm/algos/*.cpp")
 
