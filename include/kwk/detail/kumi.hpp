@@ -7,13 +7,6 @@
 //==================================================================================================
 #ifndef KUMI_TUPLE_HPP_INCLUDED
 #define KUMI_TUPLE_HPP_INCLUDED
-#if defined(__GNUC__)
-#   define KUMI_TRIVIAL [[gnu::always_inline, gnu::flatten, gnu::artificial]] inline
-#   define KUMI_TRIVIAL_NODISCARD [[nodiscard, gnu::always_inline, gnu::flatten, gnu::artificial]] inline
-#elif defined(_MSC_VER)
-#   define KUMI_TRIVIAL __forceinline
-#   define KUMI_TRIVIAL_NODISCARD [[nodiscard]]
-#endif
 #if defined( __ANDROID__ ) || defined(__APPLE__)
 #include <type_traits>
 namespace kumi
@@ -28,6 +21,126 @@ namespace kumi
 {
   using std::convertible_to;
 }
+#endif
+#include <cstddef>
+#include <type_traits>
+#include <utility>
+namespace kumi
+{
+  template<typename T, typename Enable = void> struct is_product_type : std::false_type {};
+  template<typename T> struct is_product_type<T, typename T::is_product_type> : std::true_type {};
+  template<typename T> struct size : std::tuple_size<T>   {};
+  template<typename T> struct size<T &>         : size<T> {};
+  template<typename T> struct size<T &&>        : size<T> {};
+  template<typename T> struct size<T const>     : size<T> {};
+  template<typename T> struct size<T const &>   : size<T> {};
+  template<typename T> struct size<T const &&>  : size<T> {};
+  template<typename T> inline constexpr auto size_v = size<T>::value;
+  template<std::size_t I, typename T> struct element              : std::tuple_element<I,T> {};
+  template<std::size_t I, typename T> struct element<I,T&>        : element<I,T> {};
+  template<std::size_t I, typename T> struct element<I,T&&>       : element<I,T> {};
+  template<std::size_t I, typename T> struct element<I,T const&>  : element<I,T> {};
+  template<std::size_t I, typename T> struct element<I,T const&&> : element<I,T> {};
+  template<std::size_t I, typename T> using  element_t = typename element<I,T>::type;
+  template<std::size_t I, typename T> struct member
+  {
+    using type = decltype( get<I>(std::declval<T&>()));
+  };
+  template<std::size_t I, typename T> using  member_t = typename member<I,T>::type;
+}
+namespace kumi
+{
+  template<typename T>
+  struct is_homogeneous;
+  template<typename T>
+  requires( requires { T::is_homogeneous; } )
+  struct is_homogeneous<T> : std::bool_constant<T::is_homogeneous>
+  {};
+  template<typename T>
+  inline constexpr auto is_homogeneous_v = is_homogeneous<T>::value;
+  template<typename... Ts> struct tuple;
+}
+#include <cstddef>
+#include <utility>
+namespace kumi::_
+{
+  template<typename T> concept non_empty_tuple = requires( T const &t )
+  {
+    typename std::tuple_element<0,std::remove_cvref_t<T>>::type;
+    typename std::tuple_size<std::remove_cvref_t<T>>::type;
+  };
+  template<typename T> concept empty_tuple = (std::tuple_size<std::remove_cvref_t<T>>::value == 0);
+  template<typename From, typename To> struct is_piecewise_constructible;
+  template<typename From, typename To> struct is_piecewise_convertible;
+  template<typename From, typename To> struct is_piecewise_ordered;
+  template<template<class...> class Box, typename... From, typename... To>
+  struct is_piecewise_convertible<Box<From...>, Box<To...>>
+  {
+    static constexpr bool value = (... && kumi::convertible_to<From, To>);
+  };
+  template<template<class...> class Box, typename... From, typename... To>
+  struct is_piecewise_constructible<Box<From...>, Box<To...>>
+  {
+    static constexpr bool value = (... && std::is_constructible_v<To, From>);
+  };
+  template<typename From, typename To>
+  concept ordered = requires(From const& a, To const& b){ {a < b}; };
+  template<template<class...> class Box, typename... From, typename... To>
+  struct is_piecewise_ordered<Box<From...>, Box<To...>>
+  {
+    static constexpr bool value = (... && ordered<From,To> );
+  };
+  template<typename From, typename To>
+  concept piecewise_convertible = _::is_piecewise_convertible<From, To>::value;
+  template<typename From, typename To>
+  concept piecewise_constructible = _::is_piecewise_constructible<From, To>::value;
+  template<typename From, typename To>
+  concept piecewise_ordered = _::is_piecewise_ordered<From, To>::value;
+  template<typename T, typename... Args> concept implicit_constructible = requires(Args... args)
+  {
+    T {args...};
+  };
+  template<typename F, size_t I, typename... Tuples>
+  concept supports_call_i = std::is_invocable_v<F, member_t<I,Tuples>...>;
+  template<typename F, typename Indices, typename... Tuples> struct supports_call_t;
+  template<typename F, size_t... Is, typename... Tuples>
+  struct supports_call_t<F, std::index_sequence<Is...>, Tuples...>
+      : std::bool_constant<(supports_call_i<F, Is, Tuples...> && ...)>
+  {
+  };
+  template<typename F, typename Indices, typename Tuple> struct supports_apply_t;
+  template<typename F, size_t... Is, typename Tuple>
+  struct supports_apply_t<F, std::index_sequence<Is...>, Tuple>
+      : std::is_invocable<F, decltype(get<Is>(std::declval<Tuple &&>()))...>
+  {
+  };
+  template<typename F, typename Tuple>
+  concept supports_apply = _::
+      supports_apply_t<F, std::make_index_sequence<size<Tuple>::value>, Tuple>::value;
+  template<typename F, typename Indices, typename Tuple> struct supports_nothrow_apply_t;
+  template<typename F, size_t... Is, typename Tuple>
+  struct supports_nothrow_apply_t<F, std::index_sequence<Is...>, Tuple>
+      : std::is_nothrow_invocable<F, decltype(get<Is>(std::declval<Tuple &&>()))...>
+  {
+  };
+  template<typename F, typename Tuple>
+  concept supports_nothrow_apply = _::
+      supports_nothrow_apply_t<F, std::make_index_sequence<size<Tuple>::value>, Tuple>::value;
+  template<typename F, typename... Tuples>
+  concept supports_call = _::
+      supports_call_t<F, std::make_index_sequence<(size<Tuples>::value, ...)>, Tuples...>::value;
+  template<typename T, typename U>
+  concept comparable = requires(T t, U u)
+  {
+    { t == u };
+  };
+}
+#if defined(__GNUC__)
+#   define KUMI_TRIVIAL [[gnu::always_inline, gnu::flatten, gnu::artificial]] inline
+#   define KUMI_TRIVIAL_NODISCARD [[nodiscard, gnu::always_inline, gnu::flatten, gnu::artificial]] inline
+#elif defined(_MSC_VER)
+#   define KUMI_TRIVIAL __forceinline
+#   define KUMI_TRIVIAL_NODISCARD [[nodiscard]]
 #endif
 #include <cstddef>
 #include <utility>
@@ -378,91 +491,6 @@ namespace kumi
     return []<typename T>(T const&) constexpr { return Pred<T>::value; };
   }
 }
-#include <cstddef>
-#include <type_traits>
-#include <utility>
-namespace kumi
-{
-  template<typename T, typename Enable = void> struct is_product_type : std::false_type {};
-  template<typename T> struct is_product_type<T, typename T::is_product_type> : std::true_type {};
-  template<typename T> struct size : std::tuple_size<T>   {};
-  template<typename T> struct size<T &>         : size<T> {};
-  template<typename T> struct size<T &&>        : size<T> {};
-  template<typename T> struct size<T const>     : size<T> {};
-  template<typename T> struct size<T const &>   : size<T> {};
-  template<typename T> struct size<T const &&>  : size<T> {};
-  template<typename T> inline constexpr auto size_v = size<T>::value;
-  template<std::size_t I, typename T> struct element              : std::tuple_element<I,T> {};
-  template<std::size_t I, typename T> struct element<I,T&>        : element<I,T> {};
-  template<std::size_t I, typename T> struct element<I,T&&>       : element<I,T> {};
-  template<std::size_t I, typename T> struct element<I,T const&>  : element<I,T> {};
-  template<std::size_t I, typename T> struct element<I,T const&&> : element<I,T> {};
-  template<std::size_t I, typename T> using  element_t = typename element<I,T>::type;
-  template<std::size_t I, typename T> struct member
-  {
-    using type = decltype( get<I>(std::declval<T&>()));
-  };
-  template<std::size_t I, typename T> using  member_t = typename member<I,T>::type;
-}
-namespace kumi
-{
-  template<typename T>
-  struct is_homogeneous;
-  template<typename T>
-  requires( requires { T::is_homogeneous; } )
-  struct is_homogeneous<T> : std::bool_constant<T::is_homogeneous>
-  {};
-  template<typename T>
-  inline constexpr auto is_homogeneous_v = is_homogeneous<T>::value;
-  template<typename... Ts> struct tuple;
-}
-#include <cstddef>
-#include <utility>
-namespace kumi::_
-{
-  template<typename T> concept non_empty_tuple = requires( T const &t )
-  {
-    typename std::tuple_element<0,std::remove_cvref_t<T>>::type;
-    typename std::tuple_size<std::remove_cvref_t<T>>::type;
-  };
-  template<typename T> concept empty_tuple = (std::tuple_size<std::remove_cvref_t<T>>::value == 0);
-  template<typename From, typename To> struct is_piecewise_constructible;
-  template<typename From, typename To> struct is_piecewise_convertible;
-  template<template<class...> class Box, typename... From, typename... To>
-  struct is_piecewise_convertible<Box<From...>, Box<To...>>
-  {
-    static constexpr bool value = (... && kumi::convertible_to<From, To>);
-  };
-  template<template<class...> class Box, typename... From, typename... To>
-  struct is_piecewise_constructible<Box<From...>, Box<To...>>
-  {
-    static constexpr bool value = (... && std::is_constructible_v<To, From>);
-  };
-  template<typename From, typename To>
-  concept piecewise_convertible = _::is_piecewise_convertible<From, To>::value;
-  template<typename From, typename To>
-  concept piecewise_constructible = _::is_piecewise_constructible<From, To>::value;
-  template<typename T, typename... Args> concept implicit_constructible = requires(Args... args)
-  {
-    T {args...};
-  };
-  template<typename F, size_t I, typename... Tuples>
-  concept applicable_i = std::is_invocable_v<F, member_t<I,Tuples>...>;
-  template<typename F, typename Indices, typename... Tuples> struct is_applicable;
-  template<typename F, size_t... Is, typename... Tuples>
-  struct is_applicable<F, std::index_sequence<Is...>, Tuples...>
-      : std::bool_constant<(applicable_i<F, Is, Tuples...> && ...)>
-  {
-  };
-  template<typename F, typename... Tuples>
-  concept applicable = _::
-      is_applicable<F, std::make_index_sequence<(size<Tuples>::value, ...)>, Tuples...>::value;
-  template<typename T, typename U>
-  concept comparable = requires(T t, U u)
-  {
-    { t == u };
-  };
-}
 #include <concepts>
 #include <cstddef>
 #include <type_traits>
@@ -486,7 +514,7 @@ namespace kumi
     template<typename T, typename U>
     constexpr auto check_equality()
     {
-      return []<std::size_t... I>(std::index_sequence<I...>)
+      return []<std::size_t...I>(std::index_sequence<I...>)
       {
         return (_::comparable<member_t<I,T>,member_t<I,U>> && ...);
       }(std::make_index_sequence<size<T>::value>{});
@@ -497,18 +525,55 @@ namespace kumi
 }
 namespace kumi
 {
+  namespace _{
+    template<typename T>
+    inline constexpr bool is_reference_wrapper_v =
+      !std::is_same_v<std::decay_t<typename std::unwrap_reference<T &&>::type>,
+                      typename std::unwrap_ref_decay<T &&>::type>;
+    template<typename T>
+    struct apply_object_unwrap{
+      using type = T &&;
+    };
+    template<typename T>
+    requires is_reference_wrapper_v<T>
+    struct apply_object_unwrap<T>{
+      using type = typename std::remove_cvref_t<T>::type &;
+    };
+    template<typename T>
+    requires std::is_pointer_v<std::remove_cvref_t<T>>
+    struct apply_object_unwrap<T>{
+      using type = std::remove_pointer_t<std::remove_cvref_t<T>> &;
+    };
+    template<typename T>
+    using apply_object_unwrap_t = typename apply_object_unwrap<T>::type;
+  }
   template<typename Function, product_type Tuple>
-  constexpr decltype(auto) apply(Function &&f, Tuple &&t)
+  constexpr decltype(auto) apply(Function &&f, Tuple &&t) noexcept(_::supports_nothrow_apply<Function &&, Tuple &&>)
+  requires _::supports_apply<Function&&, Tuple&&>
   {
-    if constexpr(sized_product_type<Tuple,0>) return  KUMI_FWD(f)();
+    if constexpr(sized_product_type<Tuple,0>) return KUMI_FWD(f)();
+    else if constexpr (std::is_member_pointer_v<std::decay_t<Function>>)
+      return [&]<std::size_t... I>(std::index_sequence<I...>) -> decltype(auto){
+        auto &&w = [](auto &&y) -> decltype(auto){
+          if constexpr(_::is_reference_wrapper_v<decltype(y)>)
+            return y.get();
+          else if constexpr(std::is_pointer_v<std::remove_cvref_t<decltype(y)>>)
+            return *y;
+          else
+            return KUMI_FWD(y);
+        }(get<0>(KUMI_FWD(t)));
+        if constexpr(std::is_member_object_pointer_v<std::remove_cvref_t<decltype(f)>>)
+          return KUMI_FWD(w).*f;
+        else
+          return (KUMI_FWD(w).*f)(get<I + 1>(KUMI_FWD(t))...);
+      }
+      (std::make_index_sequence<size<Tuple>::value - 1>());
     else
-    {
       return [&]<std::size_t... I>(std::index_sequence<I...>) -> decltype(auto)
       {
         return KUMI_FWD(f)(get<I>(KUMI_FWD(t))...);
       }
       (std::make_index_sequence<size<Tuple>::value>());
-    }
   }
   namespace result
   {
@@ -525,7 +590,7 @@ namespace kumi
 {
   template<typename Function, product_type Tuple, product_type... Tuples>
   constexpr void for_each(Function f, Tuple&& t, Tuples&&... ts)
-  requires _::applicable<Function, Tuple, Tuples...>
+  requires _::supports_call<Function&, Tuple, Tuples...>
   {
     if constexpr(sized_product_type<Tuple,0>) return;
     else
@@ -565,6 +630,7 @@ namespace kumi
     }
   }
 }
+#include <array>
 #include <type_traits>
 #include <utility>
 #if !defined(KUMI_DOXYGEN_INVOKED)
@@ -593,6 +659,10 @@ struct std::basic_common_reference<kumi::tuple<Ts...>, kumi::tuple<Us...>, TQual
 {
   using type = kumi::tuple<std::common_reference_t<TQual<Ts>, UQual<Us>>...>;
 };
+#endif
+#if !defined(KUMI_NO_STD_ADAPTORS)
+template< typename T, std::size_t N >
+struct kumi::is_product_type<std::array<T , N>> : std::true_type {};
 #endif
 #endif
 #include <iosfwd>
@@ -661,7 +731,7 @@ namespace kumi
     }
     template<typename... Us>
     friend constexpr auto operator==(tuple const &self, tuple<Us...> const &other) noexcept
-    requires( (sizeof...(Ts) == sizeof...(Us) ) && equality_comparable<tuple,tuple<Us...>> )
+    requires( equality_comparable<tuple,tuple<Us...>> )
     {
       return [&]<std::size_t... I>(std::index_sequence<I...>)
       {
@@ -671,43 +741,42 @@ namespace kumi
     }
     template<typename... Us>
     KUMI_TRIVIAL friend constexpr auto operator!=(tuple const &self, tuple<Us...> const &other) noexcept
-    requires( (sizeof...(Ts) == sizeof...(Us)) && equality_comparable<tuple,tuple<Us...>> )
+    requires( equality_comparable<tuple,tuple<Us...>> )
     {
       return !(self == other);
     }
     template<typename... Us>
     friend constexpr auto operator<(tuple const &lhs, tuple<Us...> const &rhs) noexcept
-    requires(sizeof...(Ts) == sizeof...(Us))
+    requires(sizeof...(Ts) == sizeof...(Us) && _::piecewise_ordered<tuple, tuple<Us...>>)
     {
       auto res = get<0>(lhs) < get<0>(rhs);
       auto const order = [&]<typename Index>(Index i)
       {
         auto y_less_x_prev  = rhs[i]  < lhs[i];
         auto x_less_y       = lhs[index_t<Index::value+1>{}] < rhs[index_t<Index::value+1>{}];
-        res                 = res || (x_less_y && !y_less_x_prev);
+        return x_less_y && !y_less_x_prev;
       };
-      [&]<std::size_t... I>(std::index_sequence<I...>)
+      return [&]<std::size_t... I>(std::index_sequence<I...>)
       {
-        (order(index_t<I>{}),...);
+        return (res || ... || order(index_t<I>{}));
       }
       (std::make_index_sequence<sizeof...(Ts)-1>());
-      return res;
     }
     template<typename... Us>
     KUMI_TRIVIAL friend constexpr auto operator<=(tuple const &lhs, tuple<Us...> const &rhs) noexcept
-    requires(sizeof...(Ts) == sizeof...(Us))
+    requires requires { rhs < lhs; }
     {
       return !(rhs < lhs);
     }
     template<typename... Us>
     KUMI_TRIVIAL friend constexpr auto operator>(tuple const &lhs, tuple<Us...> const &rhs) noexcept
-    requires(sizeof...(Ts) == sizeof...(Us))
+    requires requires { rhs < lhs; }
     {
       return rhs < lhs;
     }
     template<typename... Us>
     KUMI_TRIVIAL friend constexpr auto operator>=(tuple const &lhs, tuple<Us...> const &rhs) noexcept
-    requires(sizeof...(Ts) == sizeof...(Us))
+    requires requires { lhs < rhs; }
     {
       return !(lhs < rhs);
     }
@@ -815,18 +884,21 @@ namespace kumi
 {
   namespace _
   {
-    template<std::size_t N, std::size_t... S> constexpr auto digits(std::size_t v) noexcept
+    template<std::size_t N, std::size_t... S> struct digits
     {
-      struct { std::size_t data[N]; } digits = {};
-      std::size_t shp[] = {S...};
-      std::size_t i = 0;
-      while(v != 0)
+      constexpr auto operator()(std::size_t v) noexcept
       {
-        digits.data[i] = v % shp[i];
-        v /= shp[i++];
+        struct { std::size_t data[N]; } values = {};
+        std::size_t shp[N] = {S...};
+        std::size_t i = 0;
+        while(v != 0)
+        {
+          values.data[i] = v % shp[i];
+          v /= shp[i++];
+        }
+        return values;
       }
-      return digits;
-    }
+    };
   }
 #if !defined(KUMI_DOXYGEN_INVOKED)
   KUMI_TRIVIAL_NODISCARD constexpr auto cartesian_product() { return kumi::tuple<>{}; }
@@ -834,15 +906,26 @@ namespace kumi
   template<product_type... Ts>
   [[nodiscard]] constexpr auto cartesian_product(Ts&&... ts)
   {
+    constexpr auto idx = [&]<std::size_t... I>(std::index_sequence<I...>)
+    {
+      kumi::_::digits<sizeof...(Ts),kumi::size_v<Ts>...> dgt{};
+      using t_t = decltype(dgt(0));
+      struct { t_t data[sizeof...(I)]; } that = {dgt(I)...};
+      return that;
+    }(std::make_index_sequence<(kumi::size_v<Ts> * ...)>{});
     auto maps = [&]<std::size_t... I>(auto k, std::index_sequence<I...>)
     {
-      constexpr auto dg = _::digits<sizeof...(Ts),kumi::size_v<Ts>...>(k);
-      using tuple_t = kumi::tuple<std::tuple_element_t<dg.data[I],std::remove_cvref_t<Ts>>...>;
-      return tuple_t{kumi::get<dg.data[I]>(std::forward<Ts>(ts))...};
+      auto tps = kumi::forward_as_tuple(ts...);
+      using tuple_t = kumi::tuple < std::tuple_element_t< idx.data[k].data[I]
+                                                        , std::remove_cvref_t<std::tuple_element_t<I,decltype(tps)>>
+                                                        >...
+                                  >;
+      return tuple_t{kumi::get<idx.data[k].data[I]>(kumi::get<I>(tps))...};
     };
     return [&]<std::size_t... N>(std::index_sequence<N...>)
     {
-      return kumi::make_tuple(maps( kumi::index<N>, std::make_index_sequence<sizeof...(ts)>{})...);
+      std::make_index_sequence<sizeof...(ts)> ids;
+      return kumi::make_tuple( maps(kumi::index<N>, ids)...);
     }(std::make_index_sequence<(kumi::size_v<Ts> * ...)>{});
   }
   namespace result
@@ -878,13 +961,13 @@ namespace kumi
       }();
       return [&]<std::size_t... N>(auto&& tuples, std::index_sequence<N...>)
       {
-        using ts  = std::remove_cvref_t<decltype(tuples)>;
+        using rts  = std::remove_cvref_t<decltype(tuples)>;
         using type =  kumi::tuple
                       < std::tuple_element_t< pos.e[N]
-                                            , std::remove_cvref_t<std::tuple_element_t<pos.t[N],ts>>
+                                            , std::remove_cvref_t<std::tuple_element_t<pos.t[N],rts>>
                                             >...
                       >;
-        return type{get<pos.e[N]>(get<pos.t[N]>(tuples))...};
+        return type{get<pos.e[N]>(get<pos.t[N]>(KUMI_FWD(tuples)))...};
       }(kumi::forward_as_tuple(KUMI_FWD(ts)...), std::make_index_sequence<count-1>{});
     }
   }
@@ -1118,37 +1201,46 @@ namespace kumi
 }
 namespace kumi
 {
-  namespace _
-  {
-    template<std::size_t N, typename T>
-    constexpr auto const& eval(T const& v) noexcept { return v; }
-  }
-  template<std::size_t N, typename T> [[nodiscard]] constexpr auto generate(T const& v) noexcept
+  template<std::size_t N, typename T> [[nodiscard]] constexpr auto fill(T const& v) noexcept
   {
     return [&]<std::size_t... I>(std::index_sequence<I...>)
     {
-      return kumi::tuple{_::eval<I>(v)...};
+      auto eval = [](auto, auto const& vv) { return vv; };
+      return kumi::tuple{eval(index<I>, v)...};
+    }(std::make_index_sequence<N>{});
+  }
+  template<std::size_t N, typename Function> [[nodiscard]] constexpr auto generate(Function const& f) noexcept
+  {
+    return [&]<std::size_t... I>(std::index_sequence<I...>)
+    {
+      return kumi::tuple{f(index<I>)...};
     }(std::make_index_sequence<N>{});
   }
   template<std::size_t N, typename T> [[nodiscard]] constexpr auto iota(T v) noexcept
   {
     return [&]<std::size_t... I>(std::index_sequence<I...>)
     {
-      return kumi::tuple{T(v+static_cast<T>(I))...};
+      return kumi::tuple{static_cast<T>(v+I)...};
     }(std::make_index_sequence<N>{});
   }
   namespace result
   {
-    template<std::size_t N, typename T> struct generate
+    template<std::size_t N, typename T> struct fill
     {
-      using type = decltype( kumi::generate<N>( std::declval<T>() ) );
+      using type = decltype( kumi::fill<N>( std::declval<T>() ) );
+    };
+    template<std::size_t N, typename Function> struct generate
+    {
+      using type = decltype( kumi::generate<N>( std::declval<Function>() ) );
     };
     template<std::size_t N, typename T> struct iota
     {
       using type = decltype( kumi::iota<N>( std::declval<T>() ) );
     };
     template<std::size_t N, typename T>
-    using generate_t = typename generate<N,T>::type;
+    using fill_t = typename fill<N,T>::type;
+    template<std::size_t N, typename Function>
+    using generate_t = typename generate<N,Function>::type;
     template<std::size_t N, typename T>
     using iota_t = typename iota<N,T>::type;
   }
@@ -1239,7 +1331,7 @@ namespace kumi
   constexpr auto
   map(Function     f,
       Tuple  &&t0,
-      Tuples &&...others) requires _::applicable<Function, Tuple&&, Tuples&&...>
+      Tuples &&...others) requires _::supports_call<Function, Tuple&&, Tuples&&...>
   {
     if constexpr(sized_product_type<Tuple,0>) return std::remove_cvref_t<Tuple>{};
     else
@@ -1374,6 +1466,16 @@ namespace kumi
       (std::make_index_sequence<size<Tuple>::value>());
     }
   }
+  template<typename Function, sized_product_type_or_more<1> Tuple>
+  [[nodiscard]] constexpr auto fold_left(Function f, Tuple&& t)
+  {
+    if constexpr(sized_product_type<Tuple,1>) return get<0>(t);
+    else
+    {
+      auto&&[heads, tail] = split(KUMI_FWD(t), index<2>);
+      return fold_left(f, tail, kumi::apply(f,heads));
+    }
+  }
   template<typename Function, product_type Tuple, typename Value>
   [[nodiscard]] constexpr auto fold_right(Function f, Tuple&& t, Value init)
   {
@@ -1387,9 +1489,19 @@ namespace kumi
       (std::make_index_sequence<size<Tuple>::value>());
     }
   }
+  template<typename Function, sized_product_type_or_more<1> Tuple>
+  [[nodiscard]] constexpr auto fold_right(Function f, Tuple&& t)
+  {
+    if constexpr(sized_product_type<Tuple,1>) return get<0>(t);
+    else
+    {
+      auto&&[head, tails] = split(KUMI_FWD(t), index<size_v<Tuple>-2>);
+      return fold_left(f, head, kumi::apply(f,tails));
+    }
+  }
   namespace result
   {
-    template<typename Function, product_type Tuple, typename Value>
+    template<typename Function, product_type Tuple, typename Value = void>
     struct fold_right
     {
       using type = decltype ( kumi::fold_right( std::declval<Function>()
@@ -1398,7 +1510,15 @@ namespace kumi
                                               )
                             );
     };
-    template<typename Function, product_type Tuple, typename Value>
+    template<typename Function, product_type Tuple>
+    struct fold_right<Function,Tuple>
+    {
+      using type = decltype ( kumi::fold_right( std::declval<Function>()
+                                              , std::declval<Tuple>()
+                                              )
+                            );
+    };
+    template<typename Function, product_type Tuple, typename Value = void>
     struct fold_left
     {
       using type = decltype ( kumi::fold_left ( std::declval<Function>()
@@ -1407,9 +1527,17 @@ namespace kumi
                                               )
                             );
     };
-    template<typename Function, product_type Tuple, typename Value>
+    template<typename Function, product_type Tuple>
+    struct fold_left<Function,Tuple>
+    {
+      using type = decltype ( kumi::fold_left ( std::declval<Function>()
+                                              , std::declval<Tuple>()
+                                              )
+                            );
+    };
+    template<typename Function, product_type Tuple, typename Value = void>
     using fold_right_t = typename fold_right<Function,Tuple,Value>::type;
-    template<typename Function, product_type Tuple, typename Value>
+    template<typename Function, product_type Tuple, typename Value = void>
     using fold_left_t = typename fold_left<Function,Tuple,Value>::type;
   }
 }
@@ -1536,30 +1664,95 @@ namespace kumi
 }
 namespace kumi
 {
+  template<template<typename> typename Pred, kumi::product_type T>
+  constexpr auto partition(T&& tup) noexcept
+  {
+    constexpr auto pos = [&]()
+    {
+      struct { std::size_t count = {}, cut = {}, t[1+kumi::size<T>::value]; } that{};
+      auto locate = [&]<std::size_t... I>(std::index_sequence<I...>)
+      {
+        (( Pred<kumi::element_t<I,T>>::value ? (that.t[that.count++] = I) : I),...);
+        that.cut = that.count;
+        ((!Pred<kumi::element_t<I,T>>::value ? (that.t[that.count++] = I) : I),...);
+      };
+      locate(std::make_index_sequence<kumi::size<T>::value>{});
+      return that;
+    }();
+    auto select = [&]<typename O, std::size_t... I>(O, std::index_sequence<I...>)
+    {
+      using type = kumi::tuple<std::tuple_element_t< pos.t[O::value+I], std::remove_cvref_t<decltype(tup)>>...>;
+      return type{get<pos.t[O::value+I]>(KUMI_FWD(tup))...};
+    };
+    return kumi::tuple{ select(kumi::index<0>      , std::make_index_sequence<pos.cut>{})
+                      , select(kumi::index<pos.cut>, std::make_index_sequence<kumi::size<T>::value - pos.cut>{})
+                      };
+  }
+  namespace result
+  {
+    template<template<typename> typename Pred, kumi::product_type T> struct partition
+    {
+      using type = decltype( kumi::partition<Pred>( std::declval<T>() ) );
+    };
+    template<template<typename> typename Pred, kumi::product_type T>
+    using partition_t = typename partition<Pred, T>::type;
+  }
+}
+namespace kumi
+{
   template<typename Pred, typename T>
-  [[nodiscard]] constexpr bool all_of( T const& ts, Pred p) noexcept
+  [[nodiscard]] constexpr auto all_of(T const& ts, Pred p) noexcept
   {
     if constexpr( !product_type<T> ) return p(ts);
     else
     {
-      if constexpr(size_v<T> == 0) return true;
-      else return kumi::apply( [&](auto const&... m) { return (p(m) && ... && true); }, ts );
+      if      constexpr(size_v<T> == 0) return true;
+      else if constexpr(size_v<T> == 1) return p(get<0>(ts));
+      else return kumi::apply( [&](auto const&... m) { return (p(m) && ... && p(get<0>(ts))); }, extract(ts,index<1>));
+    }
+  }
+  template<typename T>
+  [[nodiscard]] constexpr auto all_of(T const& ts) noexcept
+  {
+    if constexpr( !product_type<T> ) return !!ts;
+    else
+    {
+      if      constexpr(size_v<T> == 0) return true;
+      else if constexpr(size_v<T> == 1) return !!get<0>(ts);
+      else return kumi::apply( [&](auto const&... m) { return (m && ... && get<0>(ts)); }, extract(ts,index<1>) );
     }
   }
   template<typename Pred, typename T>
-  [[nodiscard]] constexpr bool any_of( T const& ts, Pred p) noexcept
+  [[nodiscard]] constexpr auto any_of(T const& ts, Pred p) noexcept
   {
     if constexpr( !product_type<T> ) return p(ts);
     else
     {
-      if constexpr(size_v<T> == 0) return false;
-      else return kumi::apply( [&](auto const&... m) { return (p(m) || ... || false); }, ts );
+      if      constexpr(size_v<T> == 0) return true;
+      else if constexpr(size_v<T> == 1) return p(get<0>(ts));
+      else return kumi::apply( [&](auto const&... m) { return (p(m) || ... || p(get<0>(ts))); }, extract(ts,index<1>));
+    }
+  }
+  template<typename T>
+  [[nodiscard]] constexpr auto any_of(T const& ts) noexcept
+  {
+    if constexpr( !product_type<T> ) return !!ts;
+    else
+    {
+      if      constexpr(size_v<T> == 0) return false;
+      else if constexpr(size_v<T> == 1) return !!get<0>(ts);
+      else return kumi::apply( [&](auto const&... m) { return (m || ... || get<0>(ts)); }, extract(ts,index<1>) );
     }
   }
   template<typename Pred, typename Tuple>
-  [[nodiscard]] constexpr bool none_of( Tuple const& ts, Pred p) noexcept
+  KUMI_TRIVIAL_NODISCARD constexpr bool none_of( Tuple const& ts, Pred p) noexcept
   {
     return !any_of(ts,p);
+  }
+  template<typename Tuple>
+  KUMI_TRIVIAL_NODISCARD constexpr bool none_of(Tuple const& ts) noexcept
+  {
+    return !any_of(ts);
   }
   template<typename Pred, typename T>
   [[nodiscard]] constexpr std::size_t count_if( T const& ts, Pred p) noexcept
@@ -1606,11 +1799,21 @@ namespace kumi
     if constexpr(_::empty_tuple<Tuple>) return init;
     else return kumi::apply( [init](auto const&... m) { return (m + ... + init); }, KUMI_FWD(t) );
   }
+  template<product_type Tuple>
+  [[nodiscard]] constexpr auto sum(Tuple&& t)
+  {
+    return sum(kumi::extract(t,index<1>),get<0>(t));
+  }
   template<product_type Tuple, typename Value>
   [[nodiscard]] constexpr auto prod(Tuple&& t, Value init)
   {
     if constexpr(_::empty_tuple<Tuple>) return init;
     else return kumi::apply( [init](auto const&... m) { return (m * ... * init); }, KUMI_FWD(t) );
+  }
+  template<product_type Tuple>
+  [[nodiscard]] constexpr auto prod(Tuple&& t)
+  {
+    return prod(kumi::extract(t,index<1>),get<0>(t));
   }
   template<product_type Tuple, typename Value>
   [[nodiscard]] constexpr auto bit_and(Tuple&& t, Value init)
@@ -1618,41 +1821,70 @@ namespace kumi
     if constexpr(_::empty_tuple<Tuple>) return init;
     else return kumi::apply( [init](auto const&... m) { return (m & ... & init); }, KUMI_FWD(t) );
   }
+  template<product_type Tuple>
+  [[nodiscard]] constexpr auto bit_and(Tuple&& t)
+  {
+    return bit_and(kumi::extract(t,index<1>),get<0>(t));
+  }
   template<product_type Tuple, typename Value>
   [[nodiscard]] constexpr auto bit_or(Tuple&& t, Value init)
   {
     if constexpr(_::empty_tuple<Tuple>) return init;
     else return kumi::apply( [init](auto const&... m) { return (m | ... | init); }, KUMI_FWD(t) );
   }
+  template<product_type Tuple>
+  [[nodiscard]] constexpr auto bit_or(Tuple&& t)
+  {
+    return bit_or(kumi::extract(t,index<1>),get<0>(t));
+  }
   namespace result
   {
-    template<product_type Tuple, typename Value>
+    template<product_type Tuple, typename Value = void>
     struct sum
     {
       using type = decltype(kumi::sum(std::declval<Tuple>(), std::declval<Value>()));
     };
-    template<product_type Tuple, typename Value>
+    template<product_type Tuple> struct sum<Tuple>
+    {
+      using type = decltype(kumi::sum(std::declval<Tuple>()));
+    };
+    template<product_type Tuple, typename Value = void>
     struct prod
     {
       using type = decltype(kumi::prod(std::declval<Tuple>(), std::declval<Value>()));
     };
-    template<product_type Tuple, typename Value>
+    template<product_type Tuple>
+    struct prod<Tuple>
+    {
+      using type = decltype(kumi::prod(std::declval<Tuple>()));
+    };
+    template<product_type Tuple, typename Value = void>
     struct bit_and
     {
       using type = decltype(kumi::bit_and(std::declval<Tuple>(), std::declval<Value>()));
     };
-    template<product_type Tuple, typename Value>
+    template<product_type Tuple>
+    struct bit_and<Tuple>
+    {
+      using type = decltype(kumi::bit_and(std::declval<Tuple>()));
+    };
+    template<product_type Tuple, typename Value = void>
     struct bit_or
     {
       using type = decltype(kumi::bit_or(std::declval<Tuple>(), std::declval<Value>()));
     };
-    template<product_type Tuple, typename Value>
+    template<product_type Tuple>
+    struct bit_or<Tuple>
+    {
+      using type = decltype(kumi::bit_or(std::declval<Tuple>()));
+    };
+    template<product_type Tuple, typename Value = void>
     using sum_t = typename sum<Tuple,Value>::type;
-    template<product_type Tuple, typename Value>
+    template<product_type Tuple, typename Value = void>
     using prod_t = typename prod<Tuple,Value>::type;
-    template<product_type Tuple, typename Value>
+    template<product_type Tuple, typename Value = void>
     using bit_and_t = typename bit_and<Tuple,Value>::type;
-    template<product_type Tuple, typename Value>
+    template<product_type Tuple, typename Value = void>
     using bit_or_t = typename bit_or<Tuple,Value>::type;
   }
 }
@@ -1708,6 +1940,45 @@ namespace kumi
     template<product_type Tuple>
     using transpose_t = typename transpose<Tuple>::type;
   }
+}
+namespace kumi
+{
+  template< template<typename...> typename Traits
+          , product_type Tuple
+          , typename Seq = std::make_index_sequence<size<Tuple>::value>
+          >
+  struct apply_traits;
+  template< template<typename...> typename Traits
+          , product_type Tuple
+          , std::size_t... Is
+          >
+  requires( requires {typename Traits<element_t<Is,Tuple>...>::type;})
+  struct  apply_traits<Traits, Tuple, std::index_sequence<Is...>>
+  {
+    using type = typename Traits<element_t<Is,Tuple>...>::type;
+  };
+  template< template<typename...> typename Traits
+          , product_type Tuple
+          >
+  using apply_traits_t = typename apply_traits<Traits, Tuple>::type;
+  template< template<typename...> typename Traits
+          , product_type Tuple
+          , typename Seq = std::make_index_sequence<size<Tuple>::value>
+          >
+  struct map_traits;
+  template< template<typename...> typename Traits
+          , product_type Tuple
+          , std::size_t... Is
+          >
+  requires( requires {typename Traits<element_t<Is,Tuple>>::type;} && ...)
+  struct  map_traits<Traits, Tuple, std::index_sequence<Is...>>
+  {
+    using type = tuple <typename Traits<element_t<Is, Tuple>>::type...>;
+  };
+  template< template<typename...> typename Traits
+          , product_type Tuple
+          >
+  using map_traits_t = typename map_traits<Traits, Tuple>::type;
 }
 namespace kumi
 {
