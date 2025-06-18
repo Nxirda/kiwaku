@@ -12,8 +12,8 @@
 #include <eve/eve.hpp>
 
 /// Depending on the eve version
-//#include <eve/module/algo.hpp> 
-#include <eve/algo.hpp>
+#include <eve/module/algo.hpp> 
+//#include <eve/algo.hpp>
 
 namespace kwk
 {
