@@ -500,7 +500,7 @@ namespace kwk
     template<concepts::container In, typename Func>
     constexpr auto find_if([[maybe_unused]] kwk::eve::context const& ctx, In const& in, Func f)
     {
-        using coords_t = kumi::result::generate_t<In::static_order, std::ptrdiff_t>;
+        using coords_t = kumi::result::fill_t<In::static_order, std::ptrdiff_t>;
 
         if constexpr (In::preserve_reachability)
         {
@@ -512,7 +512,7 @@ namespace kwk
                 auto pos = kwk::coordinates(linear_pos, in.shape());
                 return std::optional<coords_t>{kumi::to_tuple(pos)};
             }
-            return std::nullopt; //std::optional<coords_t>{std::nullopt};
+            return std::optional<coords_t>{std::nullopt};
         }
         else if constexpr (In::stride::is_unit)
         {
